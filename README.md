@@ -45,4 +45,11 @@ Run in PowerShell, Command Prompt, or Terminal: `python ./SIRS_Game_of_Life.py`
  - infect_probability (-I): percent chance of infection (integer 0 - 100)
  - death_probability (-D): percent chance of death (integer 0 - 100)
  - recovery_probability (-R): percent chance of recovery (integer 0 - 100)
+ - recovery_length (-r): Turns spent immune after recovery (integer 0 - inf)
  - world dimensions (-W): width/height of the world (integer 1 - inf)
+
+## Flags
+ - Save Latest Run (--SAVE): Saves every time-step of the simulation into the "./Latest_Run" directory
+ - Show Graph (--GRAPH): Displays the graph of Susceptible/Infected/Recovered/Deceased vs Time at the end of the simulation
+ - Command Line Only (--NOGUI): Only use command line arguments and skip displaying the GUI
+ 
