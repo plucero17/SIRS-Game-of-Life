@@ -1,61 +1,72 @@
-# import math modules
+# Import math modules
 import numpy as np
 from random import randint
 from matplotlib import pyplot as plt
-from Modules.Graph_Results import *
+from matplotlib.ticker import FuncFormatter
 
-# import vision modules
+# Import custom modules
+from Modules.Support_Functions import *
+from Modules.Loading_Screen import Start_Loading_Screen
+from Modules.Loading_Screen import Generate_Initial_Image
+
+# Import vision modules
 import cv2
 
-# import system modules
+# Import system modules
+import os
+import sys
 import time
 import argparse
+import datetime
 
+# Initialize global color-map
+Susceptible_Color = [255,255,255]
+Infected_Color    = [0,0,255]
+Recovering_Color  = [0,255,0]
+Dead_Color        = [0,0,0]
+
+# Enables flag values
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+		
 # Construct argument parser for command line input
-parser = argparse.ArgumentParser()
-parser.add_argument('-t','--timeframe', type=int,default=30,
-	help='Number of time steps before simulation ends')
-parser.add_argument('-i0','--initial_infect', type=int,default=1,
-	help='Randomly infects i0 percent of the population')
-parser.add_argument('-r0','--initial_immunity', type=int,default=1,
-	help='Randomly infects i0 percent of the population')
-parser.add_argument('-I','--infect_probability',type=int,default=17,
-	help='Sets rate of infection to be I percent')
-parser.add_argument('-D','--death_probability',type=int,default=0,
-	help='Sets rate of death for infected individuals to be D percent')
-parser.add_argument('-R','--recovery_probability',type=int,default=0,
-	help='Sets rate of recovery for infected individuals to be R percent')
-parser.add_argument('-W','--world_dimensions',type=int,default=64,
-	help='Sets population of the world (square dimensions)')
-args = vars(parser.parse_args())
-
-
-# Dimensions of world
-height = args['world_dimensions']
-width  = args['world_dimensions']
-
-# Number of iterations for the simulation to run and saves frame amount
-timeframe  = args['timeframe']
-frameZFILL = len(str(timeframe))
-
-# Initial conditions for infection and recovery
-initial_infect = args['initial_infect']
-initial_immunity = args['initial_immunity']
-
-# Chance of infection/death/recovery
-infect_probability = args['infect_probability']
-death_probability = args['death_probability']
-recovery_probability = args['recovery_probability']
-
-# Creates and clears directory for the latest run and graphs folder
-Create_Directory("./Latest_Run",True)
-Create_Directory("./Graphs",False)
+def construct_parser():
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-t','--timeframe', type=int,default=30,
+		help='Number of time steps before simulation ends')
+	parser.add_argument('-i0','--initial_infect', type=int,default=1,
+		help='Randomly infects i0 percent of the population')
+	parser.add_argument('-r0','--initial_immunity', type=int,default=0,
+		help='Randomly infects i0 percent of the population')
+	parser.add_argument('-r','--recovery_length',type=int,default=8,
+		help='Sets base number of turns until recovery')
+	parser.add_argument('-I','--infect_probability',type=int,default=17,
+		help='Sets rate of infection to be I percent')
+	parser.add_argument('-D','--death_probability',type=int,default=0,
+		help='Sets rate of death for infected individuals to be D percent')
+	parser.add_argument('-R','--recovery_probability',type=int,default=0,
+		help='Sets rate of recovery for infected individuals to be R percent')
+	parser.add_argument('-W','--world_dimensions',type=int,default=64,
+		help='Sets population of the world (square dimensions)')
+	parser.add_argument('-s','--SAVE',type=str2bool,nargs='?',const=True,default=False,
+		help='Flag to save images or not')
+	parser.add_argument('-g','--GRAPH',type=str2bool,nargs='?',const=True,default=False,
+		help='Flag to graph results or not')
+	parser.add_argument('-NG','--NOGUI',type=str2bool,nargs='?',const=True,default=False,
+		help='Flag to disable GUI')
+	args = vars(parser.parse_args())
+	return args
 
 # Person Class.  Contains health status, position, and chance-based functions
 class Person:
 
 	# When first created, configure status and initial conditions
-	def __init__(self,initial_inf,initial_rec,x,y):
+	def __init__(self,initial_inf,initial_rec,recovery_length,x,y):
 	
 		# Position of the person
 		self.xpos = x
@@ -63,13 +74,14 @@ class Person:
 		
 		# Current health status and corresponding color
 		self.health_status = 0
-		self.person_image = [255,255,255]
+		self.person_image  = Susceptible_Color
 		
 		# Intervals spent immune to disease
-		self.immunity = 0
+		self.immunity        = 0
+		self.recovery_length = recovery_length
 		
 		# TODO: Add functions for configuring base resistance/susceptability parameters
-		self.resistance = 0
+		self.resistance     = 0
 		self.susceptability = 0
 		
 		# Initial chance of immunity or infection
@@ -120,30 +132,35 @@ class Person:
 			if top == 1 or left == 1 or bottom == 1 or right == 1 or initial_bool:
 			
 				# Infect probability and randomized roll
-				infect_chance = (infect_probability + self.susceptability) - self.resistance
-				infect_roll = randint(0,100*100)
+				infect_chance = int((infect_probability + self.susceptability) - self.resistance)
+				infect_roll   = randint(0,100*100)
 				
 				# If the roll is high enough, the person is infected
 				if infect_roll > (100 - infect_chance) * 100:
-					self.person_image = [128,0,128]
+					self.person_image = Infected_Color
 					self.health_status = 1
 
 		# If the person is recovering, reduce their recovery time based off of nearby infected people and eventually make them susceptible
 		elif self.health_status == 2:
-			if self.immunity >= 8 - (top*2 + left*2 + bottom*2 + right*2):
-				self.person_image = [255,255,255]
+		
+			# Every infected person nearby reduces their length of immunity
+			if self.immunity >= self.recovery_length - (top*2 + left*2 + bottom*2 + right*2):
+			
+				# Once the recovery time is reached, the person is susceptible again
+				self.person_image = Susceptible_Color
 				self.health_status = 0
 				self.immunity = 0
 			else:
 				self.immunity += 1
 		
-		# TODO: Add transition between susceptible and infected
+		# TODO: Add transition between susceptible and infected where disease is asymptomatic
 		else:
 			pass
 	
 	# If a person is infected, roll for recovery
 	def recovery(self,recovery_probability,initial_bool=False):
 	
+		# If the person is infected, or initializing recovered individuals...
 		if self.health_status == 1 or (self.health_status == 0 and initial_bool == True):
 		
 			# Recovery probability and randomized roll
@@ -152,7 +169,7 @@ class Person:
 			
 			# If the roll is high enough, the person is recovers and has temporary immunity
 			if recover_roll > (100 - recover_chance) * 100:
-				self.person_image = [0,255,0]
+				self.person_image = Recovering_Color
 				self.health_status = 2
 	
 	# If a person is infected, roll for death
@@ -166,7 +183,7 @@ class Person:
 			
 			# If the roll is high enough, the person dies
 			if death_roll > (100 - death_chance) * 100:
-				self.person_image = [0,0,0]
+				self.person_image = Dead_Color
 				self.health_status = -1
 			
 	# TODO: Add possibility for birth given nearby susceptible/recovering people
@@ -181,66 +198,169 @@ class Person:
 	def return_status(self):
 		return self.health_status
 
-# Initialized array for population of people classes and their color representations
-population = []
-pop_image  = np.zeros((height,width,3), np.uint8)
 
-# Iterates through and appends people to population
-for j in range(height):
-
-	# Creates row of people and appends to the population
-	pop_row   = [Person(initial_infect,initial_immunity,count,j) for count in range(width)]
-	population.append(pop_row)
+if __name__ == '__main__':
+	args = construct_parser()
 	
-	# Changes the pixel color to match the corresponding person's health
-	for i in range(width):
-		color = population[j][i].return_color()
-		pop_image[j][i][0] = color[0]
-		pop_image[j][i][1] = color[1]
-		pop_image[j][i][2] = color[2]
+	# Dimensions of world
+	height = args['world_dimensions']
+	width  = args['world_dimensions']
+
+	# Number of iterations for the simulation to run and saves frame amount
+	timeframe  = args['timeframe']
+	frameZFILL = len(str(timeframe))
+
+	# Boolean Flags
+	save_bool  = args['SAVE']
+	graph_bool = args['GRAPH']
+	nogui_bool = args['NOGUI']
+
+	# Initial conditions for infection and recovery
+	initial_infect   = args['initial_infect']
+	initial_immunity = args['initial_immunity']
+	recovery_length  = args['recovery_length']
+
+	# Chance of infection/death/recovery
+	infect_probability   = args['infect_probability']
+	death_probability    = args['death_probability']
+	recovery_probability = args['recovery_probability']
+
+	# Creates and clears directory for the latest run and graphs folder
+	if save_bool:
+		Create_Directory("./Latest_Run",True)
+	Create_Directory("./Graphs",False)
+
+	# Generates initialized population and visualization based on initial conditions (From Modules/Loading_Screen.py)
+	population, pop_image = Generate_Initial_Image(width,height,Person,initial_infect,initial_immunity,recovery_length)
+
+	# Displays initial conditions
+	if nogui_bool:
+		cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
+		cv2.waitKey(0)
+		cv2.destroyAllWindows()
 		
-# Displays initial conditions
-cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
-cv2.waitKey(0)
+	# Pulls up GUI for dynamic configuration of initial conditions
+	else:
+		pop_image,population,infect_probability,death_probability,recovery_probability,timeframe,height,width,initial_infect,initial_immunity,recovery_length,save_bool,graph_bool,bad_exit = Start_Loading_Screen(
+			pop_image,population,infect_probability,death_probability,recovery_probability,timeframe,height,width,initial_infect,initial_immunity,recovery_length,save_bool,graph_bool)
+		
+		# If the GUI exited abruptly, end the program
+		if bad_exit:
+			print "[Info] Thank you for using my program!"
+			sys.exit()
+		
+	# Save frame to 'Latest_Run' directory
+	if save_bool:
+		framenum = str(0).zfill(frameZFILL)
+		cv2.imwrite('./Latest_Run/frame%s.bmp' % framenum,pop_image)
+		
+	# Appends to images array
+	else:
+		images_array = []
 
-# Save frame to 'Latest_Run' directory
-framenum = str(0).zfill(frameZFILL)
-cv2.imwrite('./Latest_Run/frame%s.bmp' % framenum,cv2.resize(pop_image,(1024,1024)))
+	# Initialize arrays
+	if graph_bool:
+		susceptible_array = []
+		infected_array    = []
+		recovered_array   = []
+		deceased_array    = []
 
-# Iterates through every time interval
-for time_step in range(timeframe):
+	# Iterates through every time interval
+	for time_step in range(timeframe):
 
-	# Prints current time interval
-	print "Currently on time step: %d of %d" % (time_step,timeframe)
+		# Prints current time interval
+		os.system('cls' if os.name == 'nt' else 'clear')
+		print "[Info] Running Simulation!"
+		print "Currently on time step: %d of %d" % (time_step + 1,timeframe)
+		
+		# Initiaiize number of people
+		susceptible_people = 0
+		infected_people    = 0
+		recovered_people   = 0
+		deceased_people    = 0
+		
+		# Iterates through population
+		for j in range(height):
+			for i in range(width):
+			
+				# Roll for death/recovery/infection
+				population[j][i].death(death_probability)
+				population[j][i].recovery(recovery_probability)
+				population[j][i].infection(infect_probability,population)
+
+				# Update colors accordingly
+				color = population[j][i].return_color()
+				pop_image[j][i][0] = color[0]
+				pop_image[j][i][1] = color[1]
+				pop_image[j][i][2] = color[2]
+			
+				# Increment array value based on health status
+				if population[j][i].return_status() == 0:
+					susceptible_people += 1
+				elif population[j][i].return_status() == 1:
+					infected_people += 1
+				elif population[j][i].return_status() == 2:
+					recovered_people += 1
+				elif population[j][i].return_status() == -1:
+					deceased_people += 1
+					
+		# Save frame to 'Latest_Run' directory
+		if save_bool:
+			framenum = str(time_step).zfill(frameZFILL)
+			cv2.imwrite('./Latest_Run/frame%s.bmp' % framenum,pop_image)
+		
+		# Display updated image
+		else:
+			cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
+			images_array.append(pop_image)
+			cv2.waitKey(1)
+
+		# Adds values to arrays
+		if graph_bool:
+			susceptible_array.append(float("%.2f" % (float(susceptible_people)/float(width*height))))
+			infected_array.append(float("%.2f" % (float(infected_people)/float(width*height))))
+			recovered_array.append(float("%.2f" % (float(recovered_people)/float(width*height))))
+			deceased_array.append(float("%.2f" % (float(deceased_people)/float(width*height))))
+
+		if infected_people == 0 and recovered_people == 0:
+			timeframe = time_step + 1
+			break
 	
-	# Iterates through population
-	for j in range(height):
-		for i in range(width):
-		
-			# Roll for death/recovery/infection
-			population[j][i].death(death_probability)
-			population[j][i].recovery(recovery_probability)
-			population[j][i].infection(infect_probability)
-
-			# Update colors accordingly
-			color = population[j][i].return_color()
-			pop_image[j][i][0] = color[0]
-			pop_image[j][i][1] = color[1]
-			pop_image[j][i][2] = color[2]
-		
-	# Display updated image
-	cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
-	cv2.waitKey(1)
+	# Print message to indicate end of simulation
+	print "[Info] Simulation Complete!"
 
 	# Save frame to 'Latest_Run' directory
-	framenum = str(time_step).zfill(frameZFILL)
-	cv2.imwrite('./Latest_Run/frame%s.bmp' % framenum,cv2.resize(pop_image,(1024,1024)))	
-	
-# Displayes final population
-print "[Info] Simulation Complete!"
-cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
-cv2.waitKey(0)	
+	if save_bool:
+		images_array = Construct_Image_Array("./Latest_Run",".bmp")
 
-# Save frame to 'Latest_Run' directory
-framenum = str(timeframe).zfill(frameZFILL)
-cv2.imwrite('./Latest_Run/frame%s.bmp' % framenum,cv2.resize(pop_image,(1024,1024)))	
+	# Displayes final population	
+	else:
+		cv2.imshow('[Lucero] SIRS Model in Conway\'s Game of Life',cv2.resize(pop_image,(1024,1024)))
+		cv2.waitKey(0)	
+
+	# Clear simulation
+	cv2.destroyAllWindows()
+
+	# Plot graph
+	if graph_bool:
+	
+		# Collect date for naming graph and initialize time array
+		time = datetime.datetime.now()
+		time_array = range(timeframe)
+		
+		# Plot Susceptible/Infected/Recovered/Deceased Population (as a percentage) vs Time (in timesteps)
+		plt.plot(time_array,susceptible_array,'b',time_array,infected_array,'r',time_array,recovered_array,'g',time_array,deceased_array,'k')
+		
+		# Set Title, Legend, X Label, and Y label
+		plt.title("SIRS Model of Conway\'s Game of Life")
+		plt.legend(["Susceptible Population", "Infected Population", "Recovered Population", "Deceased Population"])
+		plt.xlabel("Time (Time-Steps)")
+		plt.ylabel("Percentage of Population")
+		plt.ylim(0,1)
+		
+		# Configure Y Axis to be percentage-based and save graph
+		plt.gca().set_yticklabels(['{:.0f}%'.format(x*100) for x in plt.gca().get_yticks()]) 
+		plt.savefig("./Graphs/Figure_%d-%d-%d_%d%d%d" % (time.year,time.month,time.day,time.hour,time.minute,time.second))
+		
+		# Show graph
+		plt.show()
